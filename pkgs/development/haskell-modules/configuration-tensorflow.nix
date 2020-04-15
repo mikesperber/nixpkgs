@@ -4,61 +4,86 @@ with haskellLib;
 
 self: super:
 let
+  # This contains updates to the dependencies, without which it would
+  # be even more work to get it to build.
+  # As of 2020-04, there's no new release in sight, which is why we're
+  # pulling from Github.
   tensorflow-haskell = pkgs.fetchFromGitHub {
     owner = "tensorflow";
     repo = "haskell";
-    rev = "85bf0bb12cecfcdfcf31dea43b67cbe44576f685";
-    sha256 = "1xbwc8y4a7n2163g746dpyh1q86rbxaw3d41kcy1mbhvmfqq56x7";
+    rev = "0f322b2e0611cbe7011c84ba8b6cb822e4725ebc";
+    sha256 = "15gn66i547q20sd50ixwm6yk1g00syfgxp8xa6xjd0i3kcsl3gs1";
     fetchSubmodules = true;
   };
 
   setSourceRoot = dir: drv: drv.overrideAttrs (_oldAttrs: {sourceRoot = "source/${dir}";});
 
-  proto-lens = self.proto-lens;
-  proto-lens-protoc = self.proto-lens-protoc;
-  proto-lens-protobuf-types = self.proto-lens-protobuf-types;
-  mainland-pretty = self.mainland-pretty_0_6_2;
+  proto-lens = self.proto-lens_0_5_1_0;
+  proto-lens-protoc = self.proto-lens-protoc_0_5_0_0;
+  proto-lens-runtime = self.proto-lens-runtime_0_5_0_0;
+  proto-lens-protobuf-types = self.proto-lens-protobuf-types_0_5_0_0;
+  proto-lens-setup = self.proto-lens-setup_0_4_0_2;
+  lens-family = self.lens-family_1_2_3;
 in
 {
-  proto-lens = appendPatch super.proto-lens ./patches/proto-lens-0.2.2.0.patch;
-  proto-lens-descriptors = doJailbreak (super.proto-lens-descriptors.override {
-    inherit proto-lens;
-    lens-labels = self.lens-labels_0_1_0_2;
-  });
-  proto-lens-protoc = appendPatch (addBuildDepend (super.proto-lens-protoc.override {
-    inherit proto-lens;
-  }) self.semigroups) ./patches/proto-lens-protoc-0.2.2.3.patch;
-  proto-lens-protobuf-types = doJailbreak (super.proto-lens-protobuf-types.override {
-    inherit proto-lens proto-lens-protoc;
+  lens-family_1_2_3 = super.lens-family_1_2_3.override {
+    lens-family-core = self.lens-family-core_1_2_3;
+  };
+  
+  proto-lens_0_5_1_0 = (appendPatch (doJailbreak super.proto-lens_0_5_1_0) ./patches/proto-lens-0.5.1.0.patch).override {
+    inherit lens-family;
+  };
+
+  proto-lens-runtime_0_5_0_0 = doJailbreak (super.proto-lens-runtime_0_5_0_0.override {
+    inherit lens-family proto-lens;
   });
 
-  lens-labels_0_1_0_2 = doJailbreak super.lens-labels_0_1_0_2;
+  proto-lens-protoc_0_5_0_0 = doJailbreak (super.proto-lens-protoc_0_5_0_0.override {
+    inherit lens-family proto-lens;
+    haskell-src-exts = self.haskell-src-exts_1_19_1;
+  });
+  proto-lens-setup_0_4_0_2 = appendPatch (doJailbreak (super.proto-lens-setup_0_4_0_2.override {
+    inherit proto-lens-protoc;
+  })) ./patches/proto-lens-setup-0.4.0.2.patch;
 
-  haskell-src-exts_1_19_1 = appendPatch (doJailbreak super.haskell-src-exts_1_19_1) (
+  proto-lens-protobuf-types_0_5_0_0 = doJailbreak (super.proto-lens-protobuf-types_0_5_0_0.override {
+    inherit lens-family proto-lens proto-lens-runtime proto-lens-setup;
+  });
+
+  haskell-src-exts_1_19_1 = appendPatches (doJailbreak super.haskell-src-exts_1_19_1) [
     # Adapt to the Semigroup–Monoid Proposal (enables building on GHC >= 8.4)
-    pkgs.fetchpatch {
-      url = "https://github.com/haskell-suite/haskell-src-exts/commit/258e072fe9e37f94360b7488b58ea2832843bbb8.patch";
-      sha256 = "0ja6ai41v9plinlhjwja282m6ahn6mw4xi79np0jxqk83cg0z1ff";
-    }
-  );
+    (pkgs.fetchpatch {
+        url = https://github.com/haskell-suite/haskell-src-exts/commit/258e072fe9e37f94360b7488b58ea2832843bbb8.patch;
+        sha256 = "0ja6ai41v9plinlhjwja282m6ahn6mw4xi79np0jxqk83cg0z1ff";
+    })
+    # Adapt to MonadFail proposal (enables building on GHC >= 8.8)
+    (pkgs.fetchpatch {
+        url = https://gist.githubusercontent.com/mikesperber/0f2addaf3fbe97ffb4a5234d8711ba41/raw/e09e20998283c7195e82d546ba9266d290eb000d/gistfile1.txt;
+        sha256 = "18clvli7vpqsqlf2f3qidn71738j9zdlpana6wha3x0dxwan5ly0";
+    }) ];
 
-  tensorflow-proto = super.tensorflow-proto.override {
-    inherit proto-lens proto-lens-protobuf-types;
+  tensorflow-proto = (setSourceRoot "tensorflow-proto" (overrideCabal super.tensorflow-proto (drv: { src = tensorflow-haskell; }))).override {
+    inherit proto-lens proto-lens-runtime proto-lens-setup proto-lens-protobuf-types;
   };
-  tensorflow = super.tensorflow.override {
-    inherit mainland-pretty proto-lens;
+
+  tensorflow = (setSourceRoot "tensorflow" (overrideCabal super.tensorflow (drv: { src = tensorflow-haskell; }))).override {
+    inherit lens-family proto-lens;
   };
-  tensorflow-core-ops = super.tensorflow-core-ops.override {
-    inherit mainland-pretty proto-lens;
+
+  tensorflow-core-ops = (setSourceRoot "tensorflow-core-ops" (overrideCabal super.tensorflow-core-ops (drv: { src = tensorflow-haskell; }))).override {
+    inherit lens-family proto-lens;
   };
-  tensorflow-logging = super.tensorflow-logging.override {
-    inherit proto-lens;
+
+  tensorflow-logging = (setSourceRoot "tensorflow-logging" (overrideCabal super.tensorflow-logging (drv: { src = tensorflow-haskell; }))).override {
+    inherit lens-family proto-lens;
   };
-  tensorflow-mnist = overrideCabal (super.tensorflow-mnist.override {
-    inherit proto-lens;
+
+  tensorflow-mnist = (setSourceRoot "tensorflow-mnist" (overrideCabal super.tensorflow-mnist (drv: { src = tensorflow-haskell; }))).override {
+    inherit lens-family proto-lens;
     # https://github.com/tensorflow/haskell/issues/215
     tensorflow-mnist-input-data = self.tensorflow-mnist-input-data;
-  }) (_drv: { broken = false; });
+  };
+
   tensorflow-mnist-input-data = setSourceRoot "tensorflow-mnist-input-data" (super.callPackage (
     { mkDerivation, base, bytestring, Cabal, cryptonite, directory
     , filepath, HTTP, network-uri, stdenv
@@ -95,10 +120,12 @@ in
       license = stdenv.lib.licenses.asl20;
     }
   ) {});
-  tensorflow-opgen = super.tensorflow-opgen.override {
-    inherit mainland-pretty proto-lens;
+
+  tensorflow-opgen = (setSourceRoot "tensorflow-opgen" (overrideCabal super.tensorflow-opgen (drv: { src = tensorflow-haskell; }))).override {
+    inherit lens-family proto-lens;
   };
-  tensorflow-ops = super.tensorflow-ops.override {
-    inherit proto-lens;
+
+  tensorflow-ops = (setSourceRoot "tensorflow-ops" (overrideCabal super.tensorflow-ops (drv: { src = tensorflow-haskell; }))).override {
+    inherit lens-family proto-lens;
   };
 }
